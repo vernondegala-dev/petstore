@@ -43,14 +43,23 @@ pipeline {
         stage('API Tests (Pytest)') {
             steps {
                 script {
+                    // Reconstruct the exact image tag built and pushed in the previous stage
+                    def pytestImageRun = "${DOCKER_REGISTRY}/petstore-pytest:${env.BUILD_NUMBER}"
+
+                    echo "Running containerized tests using image: ${pytestImageRun}"
+                    
+                    // 1. Pre-create the directory cleanly
                     sh "mkdir -p ${WORKSPACE}/reports"
-                    sh "docker run --rm -v ${WORKSPACE}/reports:/app/reports ${env.FINAL_PYTEST_IMAGE}"
+
+                    // 2. Execute the verified dynamic image name instead of letting it default to null
+                    sh "docker run --rm -v ${WORKSPACE}/reports:/app/reports ${pytestImageRun}"
                 }
             }
             post {
                 always {
+                    // Only attempt to archive if the file was successfully written to the workspace
                     publishHTML([
-                        allowMissing: false,
+                        allowMissing: true, // Prevents Jenkins from crashing if a massive compilation failure occurs
                         alwaysLinkToLastBuild: true,
                         keepAll: true,
                         reportDir: 'reports',
