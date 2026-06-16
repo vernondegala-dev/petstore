@@ -2,15 +2,11 @@ pipeline {
     agent any
 
     environment {
-        // IMPORTANT: You MUST replace 'YOUR_DOCKERHUB_NAMESPACE' with your actual 
-        // Docker Hub username/org for the 'docker push' to succeed.
-        // Example: DOCKER_HUB_USER = "myusername"
-        DOCKER_HUB_USER = "YOUR_DOCKERHUB_NAMESPACE" 
+        // IMPORTANT: Change this to your actual Docker Hub username.
+        // It will be automatically converted to lowercase by the script below.
+        DOCKER_HUB_USER_RAW = "YOUR_DOCKERHUB_NAMESPACE" 
         
-        PYTEST_IMAGE = "${DOCKER_HUB_USER}/petstore-pytest:${env.BUILD_NUMBER}"
-        LOCUST_IMAGE = "${DOCKER_HUB_USER}/petstore-locust:${env.BUILD_NUMBER}"
-        
-        // Fixes the "context not found" error on macOS agents
+        // Forces Docker to use the default context (local Unix socket)
         DOCKER_CONTEXT = 'default'
     }
 
@@ -24,20 +20,27 @@ pipeline {
         stage('Build and Push Images') {
             steps {
                 script {
-                    // This block handles 'docker login' using your Jenkins credentials
+                    // Docker repository names MUST be lowercase.
+                    def dockerUser = env.DOCKER_HUB_USER_RAW.toLowerCase()
+                    def pytestImage = "${dockerUser}/petstore-pytest:${env.BUILD_NUMBER}"
+                    def locustImage = "${dockerUser}/petstore-locust:${env.BUILD_NUMBER}"
+
                     docker.withRegistry('https://index.docker.io/v1/', 'docker-registry-credentials') {
                         
-                        echo "Building Pytest image: ${PYTEST_IMAGE}"
-                        def pytestImg = docker.build("${PYTEST_IMAGE}", "-f infrastructure/docker/Dockerfile.pytest .")
+                        echo "Building Pytest image: ${pytestImage}"
+                        def pytestImg = docker.build("${pytestImage}", "-f infrastructure/docker/Dockerfile.pytest .")
 
-                        echo "Building Locust image: ${LOCUST_IMAGE}"
-                        def locustImg = docker.build("${LOCUST_IMAGE}", "-f infrastructure/docker/Dockerfile.locust .")
+                        echo "Building Locust image: ${locustImage}"
+                        def locustImg = docker.build("${locustImage}", "-f infrastructure/docker/Dockerfile.locust .")
 
                         echo "Pushing images to Docker Hub..."
-                        // These will fail if DOCKER_HUB_USER is not your actual username
                         pytestImg.push()
                         locustImg.push()
                     }
+                    
+                    // Export these for subsequent stages
+                    env.FINAL_PYTEST_IMAGE = pytestImage
+                    env.FINAL_LOCUST_IMAGE = locustImage
                 }
             }
         }
@@ -46,7 +49,7 @@ pipeline {
             steps {
                 script {
                     sh "mkdir -p ${WORKSPACE}/reports"
-                    sh "docker run --rm -v ${WORKSPACE}/reports:/app/reports ${PYTEST_IMAGE}"
+                    sh "docker run --rm -v ${WORKSPACE}/reports:/app/reports ${env.FINAL_PYTEST_IMAGE}"
                 }
             }
             post {
@@ -71,8 +74,8 @@ pipeline {
                     sh "kubectl apply -f infrastructure/k8s/locust.yaml"
                     
                     // Update the running deployment with the newly pushed image
-                    sh "kubectl set image deployment/locust-master locust-master=${LOCUST_IMAGE}"
-                    sh "kubectl set image deployment/locust-worker locust-worker=${LOCUST_IMAGE}"
+                    sh "kubectl set image deployment/locust-master locust-master=${env.FINAL_LOCUST_IMAGE}"
+                    sh "kubectl set image deployment/locust-worker locust-worker=${env.FINAL_LOCUST_IMAGE}"
                 }
             }
         }
