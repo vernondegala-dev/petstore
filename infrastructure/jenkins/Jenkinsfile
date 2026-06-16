@@ -74,13 +74,14 @@ pipeline {
         stage('Deploy Performance Infrastructure (K8s)') {
             steps {
                 script {
-                    // Reconstruct the exact image tag built in Build #26
+                    // Reconstruct the exact image tag built and pushed earlier in the pipeline
                     def locustImageName = "${DOCKER_REGISTRY}/petstore-locust:${env.BUILD_NUMBER}"
 
                     echo "Applying Kubernetes manifests..."
                     sh "kubectl apply -f infrastructure/k8s/locust.yaml"
 
-                    // Fix: Pass the actual variable name, not an empty or misspelled reference
+                    echo "Patching Kubernetes deployments with new image: ${locustImageName}"
+                    // FIX: Use the variable wrapper ${locustImageName} instead of an empty/null reference
                     sh "kubectl set image deployment/locust-master locust-master=${locustImageName}"
                     sh "kubectl set image deployment/locust-worker locust-worker=${locustImageName}"
                 }
