@@ -1,0 +1,56 @@
+pipeline {
+    agent any
+
+    environment {
+        DOCKER_REGISTRY = "your-docker-repo"
+        PYTEST_IMAGE = "${DOCKER_REGISTRY}/petstore-pytest:${env.BUILD_NUMBER}"
+        LOCUST_IMAGE = "${DOCKER_REGISTRY}/petstore-locust:${env.BUILD_NUMBER}"
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Build Images') {
+            steps {
+                script {
+                    sh "docker build -t ${PYTEST_IMAGE} -f infrastructure/docker/Dockerfile.pytest ."
+                    sh "docker build -t ${LOCUST_IMAGE} -f infrastructure/docker/Dockerfile.locust ."
+                }
+            }
+        }
+
+        stage('API Tests (Pytest)') {
+            steps {
+                script {
+                    // Run pytest in a container and capture results
+                    sh "docker run --rm -v ${WORKSPACE}/reports:/app/reports ${PYTEST_IMAGE}"
+                }
+            }
+            post {
+                always {
+                    publishHTML([allowMissing: false, alwaysLinkToLastBuild: true, keepAll: true, reportDir: 'reports', reportFiles: 'report.html', reportName: 'Pytest API Report', reportTitles: ''])
+                }
+            }
+        }
+
+        stage('Deploy Performance Infrastructure (K8s)') {
+            steps {
+                script {
+                    // Update image names in k8s manifests and apply
+                    sh "sed -i 's|your-docker-repo/petstore-locust:latest|${LOCUST_IMAGE}|g' infrastructure/k8s/locust.yaml"
+                    sh "kubectl apply -f infrastructure/k8s/locust.yaml"
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            cleanWs()
+        }
+    }
+}

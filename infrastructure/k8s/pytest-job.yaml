@@ -1,0 +1,15 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: petstore-api-tests
+spec:
+  template:
+    spec:
+      containers:
+      - name: pytest
+        image: your-docker-repo/petstore-pytest:latest
+        env:
+        - name: API_KEY
+          value: "special-key"
+      restartPolicy: Never
+  backoffLimit: 2

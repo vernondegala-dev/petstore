@@ -1,0 +1,13 @@
+FROM python:3.9-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY performance/locustfile.py .
+
+EXPOSE 8089
+
+# Default command for master, can be overridden for worker
+CMD ["locust", "-f", "locustfile.py"]

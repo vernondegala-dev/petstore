@@ -1,0 +1,8 @@
+pytest
+requests
+locust
+locust-plugins
+pytest-html
+pytest-xdist
+python-dotenv
+jsonschema
