@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     environment {
-        // Replace with your Docker Hub username
+        // REPLACE with your actual Docker Hub username
         DOCKER_HUB_USER = "your-dockerhub-username"
         PYTEST_IMAGE = "${DOCKER_HUB_USER}/petstore-pytest:${env.BUILD_NUMBER}"
         LOCUST_IMAGE = "${DOCKER_HUB_USER}/petstore-locust:${env.BUILD_NUMBER}"
@@ -16,23 +16,14 @@ pipeline {
         }
 
         stage('Build and Push Images') {
-            environment {
-                // Forces Docker to use the local Unix socket instead of looking for 'desktop-linux'
-                DOCKER_CONTEXT = 'default'
-            }
             steps {
                 script {
-                    def pytestImageName = "${DOCKER_REGISTRY}/petstore-pytest:${env.BUILD_NUMBER}"
-                    def locustImageName = "${DOCKER_REGISTRY}/petstore-locust:${env.BUILD_NUMBER}"
-
-                    // Using the native Docker pipeline plugin
                     docker.withRegistry('https://index.docker.io/v1/', 'docker-registry-credentials') {
+                        echo "Building Pytest image: ${PYTEST_IMAGE}"
+                        def pytestImg = docker.build("${PYTEST_IMAGE}", "-f infrastructure/docker/Dockerfile.pytest .")
 
-                        echo "Building Pytest image..."
-                        def pytestImg = docker.build("${pytestImageName}", "-f infrastructure/docker/Dockerfile.pytest .")
-
-                        echo "Building Locust image..."
-                        def locustImg = docker.build("${locustImageName}", "-f infrastructure/docker/Dockerfile.locust .")
+                        echo "Building Locust image: ${LOCUST_IMAGE}"
+                        def locustImg = docker.build("${LOCUST_IMAGE}", "-f infrastructure/docker/Dockerfile.locust .")
 
                         echo "Pushing images to Docker Hub..."
                         pytestImg.push()
@@ -45,13 +36,8 @@ pipeline {
         stage('API Tests (Pytest)') {
             steps {
                 script {
-                    // Dynamically construct the image name using your registry parameter and build number
-                    def pytestImageRun = "${DOCKER_REGISTRY}/petstore-pytest:${env.BUILD_NUMBER}"
-
-                    echo "Pulling/Verifying image consistency: ${pytestImageRun}"
-
-                    // Run pytest in a container, mounting the workspace reports folder to capture the HTML output
-                    sh "docker run --rm -v ${WORKSPACE}/reports:/app/reports ${pytestImageRun}"
+                    sh "mkdir -p ${WORKSPACE}/reports"
+                    sh "docker run --rm -v ${WORKSPACE}/reports:/app/reports ${PYTEST_IMAGE}"
                 }
             }
             post {
@@ -72,17 +58,13 @@ pipeline {
         stage('Deploy Performance Infrastructure (K8s)') {
             steps {
                 script {
-                    // Reconstruct the exact image tag pushed in the build stage
-                    def targetLocustImage = "${DOCKER_REGISTRY}/petstore-locust:${env.BUILD_NUMBER}"
-
-                    echo "Updating Kubernetes manifest to target: ${targetLocustImage}"
-
-                    // 1. Added '' after -i to satisfy macOS BSD sed requirements
-                    // 2. Swapped out ${LOCUST_IMAGE} for our resolved targetLocustImage variable
-                    sh "sed -i '' 's|your-docker-repo/petstore-locust:latest|${targetLocustImage}|g' infrastructure/k8s/locust.yaml"
-
-                    echo "Applying updated manifest to the Kubernetes cluster..."
+                    echo "Applying Kubernetes manifests..."
+                    // We apply the base manifest first
                     sh "kubectl apply -f infrastructure/k8s/locust.yaml"
+                    
+                    // Then we use kubectl set image to ensure the new version is deployed
+                    sh "kubectl set image deployment/locust-master locust-master=${LOCUST_IMAGE}"
+                    sh "kubectl set image deployment/locust-worker locust-worker=${LOCUST_IMAGE}"
                 }
             }
         }

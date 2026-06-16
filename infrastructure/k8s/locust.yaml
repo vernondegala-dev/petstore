@@ -33,8 +33,14 @@ spec:
       containers:
         - name: locust-master
           image: your-docker-repo/petstore-locust:latest
-          # Loads the test script, designates this pod as orchestrator, and binds to all interfaces
-          args: ["-f", "locustfile.py", "--master", "--web-host", "0.0.0.0"]
+          args: 
+            - "-f"
+            - "locustfile.py"
+            - "--master"
+            - "--web-host"
+            - "0.0.0.0"
+            - "--host"
+            - "https://petstore.swagger.io"
           ports:
             - containerPort: 8089
               name: web
@@ -58,5 +64,10 @@ spec:
       containers:
         - name: locust-worker
           image: your-docker-repo/petstore-locust:latest
-          # Loads the test script and hooks into the master container service route
-          args: ["-f", "locustfile.py", "--worker", "--master-host=locust-master"]
+          args: 
+            - "-f"
+            - "locustfile.py"
+            - "--worker"
+            - "--master-host=locust-master"
+            - "--host"
+            - "https://petstore.swagger.io"
