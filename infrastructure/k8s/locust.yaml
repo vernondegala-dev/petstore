@@ -32,7 +32,7 @@ spec:
     spec:
       containers:
         - name: locust-master
-          image: your-docker-repo/petstore-locust:latest
+          image: your-docker-hub-username/petstore-locust:latest # Updated via Jenkins
           args: 
             - "-f"
             - "locustfile.py"
@@ -46,6 +46,25 @@ spec:
               name: web
             - containerPort: 5557
               name: communication
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8089
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8089
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -63,11 +82,19 @@ spec:
     spec:
       containers:
         - name: locust-worker
-          image: your-docker-repo/petstore-locust:latest
+          image: your-docker-hub-username/petstore-locust:latest # Updated via Jenkins
           args: 
             - "-f"
             - "locustfile.py"
             - "--worker"
-            - "--master-host=locust-master"
+            - "--master-host"
+            - "locust-master"
             - "--host"
             - "https://petstore.swagger.io"
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
