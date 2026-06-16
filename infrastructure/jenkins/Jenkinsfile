@@ -16,15 +16,25 @@ pipeline {
         }
 
         stage('Build and Push Images') {
+            environment {
+                // Forces Docker to use the local Unix socket instead of looking for 'desktop-linux'
+                DOCKER_CONTEXT = 'default'
+            }
             steps {
                 script {
-                    // Use the credentials ID defined in Jenkins
+                    def pytestImageName = "${DOCKER_REGISTRY}/petstore-pytest:${env.BUILD_NUMBER}"
+                    def locustImageName = "${DOCKER_REGISTRY}/petstore-locust:${env.BUILD_NUMBER}"
+
+                    // Using the native Docker pipeline plugin
                     docker.withRegistry('https://index.docker.io/v1/', 'docker-registry-credentials') {
-                        // Build images
-                        def pytestImg = docker.build("${PYTEST_IMAGE}", "-f infrastructure/docker/Dockerfile.pytest .")
-                        def locustImg = docker.build("${LOCUST_IMAGE}", "-f infrastructure/docker/Dockerfile.locust .")
-                        
-                        // Push images to Docker Hub
+
+                        echo "Building Pytest image..."
+                        def pytestImg = docker.build("${pytestImageName}", "-f infrastructure/docker/Dockerfile.pytest .")
+
+                        echo "Building Locust image..."
+                        def locustImg = docker.build("${locustImageName}", "-f infrastructure/docker/Dockerfile.locust .")
+
+                        echo "Pushing images to Docker Hub..."
                         pytestImg.push()
                         locustImg.push()
                     }
