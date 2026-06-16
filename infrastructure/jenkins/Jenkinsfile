@@ -2,13 +2,15 @@ pipeline {
     agent any
 
     environment {
-        // REPLACE with your actual Docker Hub username
-        DOCKER_HUB_USER = "your-dockerhub-username"
+        // IMPORTANT: You MUST replace 'YOUR_DOCKERHUB_NAMESPACE' with your actual 
+        // Docker Hub username/org for the 'docker push' to succeed.
+        // Example: DOCKER_HUB_USER = "myusername"
+        DOCKER_HUB_USER = "YOUR_DOCKERHUB_NAMESPACE" 
+        
         PYTEST_IMAGE = "${DOCKER_HUB_USER}/petstore-pytest:${env.BUILD_NUMBER}"
         LOCUST_IMAGE = "${DOCKER_HUB_USER}/petstore-locust:${env.BUILD_NUMBER}"
         
-        // Forces Docker to use the default context (local Unix socket)
-        // This avoids the "desktop-linux" context resolution error on macOS
+        // Fixes the "context not found" error on macOS agents
         DOCKER_CONTEXT = 'default'
     }
 
@@ -22,7 +24,9 @@ pipeline {
         stage('Build and Push Images') {
             steps {
                 script {
+                    // This block handles 'docker login' using your Jenkins credentials
                     docker.withRegistry('https://index.docker.io/v1/', 'docker-registry-credentials') {
+                        
                         echo "Building Pytest image: ${PYTEST_IMAGE}"
                         def pytestImg = docker.build("${PYTEST_IMAGE}", "-f infrastructure/docker/Dockerfile.pytest .")
 
@@ -30,6 +34,7 @@ pipeline {
                         def locustImg = docker.build("${LOCUST_IMAGE}", "-f infrastructure/docker/Dockerfile.locust .")
 
                         echo "Pushing images to Docker Hub..."
+                        // These will fail if DOCKER_HUB_USER is not your actual username
                         pytestImg.push()
                         locustImg.push()
                     }
@@ -41,8 +46,6 @@ pipeline {
             steps {
                 script {
                     sh "mkdir -p ${WORKSPACE}/reports"
-                    // Running with --net=host or similar might be needed if tests talk to local services, 
-                    // but since we are hitting petstore.swagger.io, default bridge is fine.
                     sh "docker run --rm -v ${WORKSPACE}/reports:/app/reports ${PYTEST_IMAGE}"
                 }
             }
@@ -67,7 +70,7 @@ pipeline {
                     echo "Applying Kubernetes manifests..."
                     sh "kubectl apply -f infrastructure/k8s/locust.yaml"
                     
-                    // Force update the images to the ones just pushed
+                    // Update the running deployment with the newly pushed image
                     sh "kubectl set image deployment/locust-master locust-master=${LOCUST_IMAGE}"
                     sh "kubectl set image deployment/locust-worker locust-worker=${LOCUST_IMAGE}"
                 }

@@ -7,7 +7,7 @@ import uuid
 @events.init.add_listener
 def on_locust_init(environment, **kwargs):
     if environment.web_ui:
-        # Exposes metrics at /export/prometheus
+        # Exposes metrics at /export/prometheus on port 8089
         PrometheusExporter(environment, port=8089)
 
 class PetstoreUser(HttpUser):
