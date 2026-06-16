@@ -72,8 +72,16 @@ pipeline {
         stage('Deploy Performance Infrastructure (K8s)') {
             steps {
                 script {
-                    // Update image names in k8s manifests with the specific build tag and apply
-                    sh "sed -i 's|your-docker-repo/petstore-locust:latest|${LOCUST_IMAGE}|g' infrastructure/k8s/locust.yaml"
+                    // Reconstruct the exact image tag pushed in the build stage
+                    def targetLocustImage = "${DOCKER_REGISTRY}/petstore-locust:${env.BUILD_NUMBER}"
+
+                    echo "Updating Kubernetes manifest to target: ${targetLocustImage}"
+
+                    // 1. Added '' after -i to satisfy macOS BSD sed requirements
+                    // 2. Swapped out ${LOCUST_IMAGE} for our resolved targetLocustImage variable
+                    sh "sed -i '' 's|your-docker-repo/petstore-locust:latest|${targetLocustImage}|g' infrastructure/k8s/locust.yaml"
+
+                    echo "Applying updated manifest to the Kubernetes cluster..."
                     sh "kubectl apply -f infrastructure/k8s/locust.yaml"
                 }
             }
