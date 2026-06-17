@@ -8,18 +8,18 @@ import os
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Reverting to the known stable import for locust-plugins 3.2.0
+# Correct import for locust-plugins 3.2.0
 try:
-    from locust_plugins.listeners import PrometheusListener as PrometheusExporter
-    logger.info("Imported PrometheusListener from locust_plugins.listeners")
+    from locust_plugins.listeners import PrometheusExporter
+    logger.info("Successfully imported PrometheusExporter from locust_plugins.listeners")
 except ImportError as e:
     PrometheusExporter = None
-    logger.error(f"CRITICAL: Failed to import PrometheusListener: {e}")
+    logger.error(f"CRITICAL: Failed to import PrometheusExporter: {e}")
 
 @events.init.add_listener
 def on_locust_init(environment, **kwargs):
     if PrometheusExporter:
-        # In older versions, we check if it's the master or standalone
+        # In this version, we start it on the master node
         if environment.web_ui:
             try:
                 port = int(os.getenv("METRICS_PORT", 9191))
