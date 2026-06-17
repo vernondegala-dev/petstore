@@ -3,7 +3,7 @@ import random
 import uuid
 import logging
 import os
-from prometheus_client import generate_latest, Gauge, Counter, Histogram, REGISTRY
+from prometheus_client import generate_latest, Gauge, REGISTRY
 from gevent import pywsgi
 import gevent
 
@@ -11,9 +11,11 @@ import gevent
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Native Prometheus Metrics
-REQUEST_TIME = Histogram('locust_request_duration_seconds', 'Response time in seconds', ['method', 'name'])
-REQUEST_COUNT = Counter('locust_requests_total', 'Total requests', ['method', 'name', 'status'])
+# --- Prometheus Metrics (Gauges are better for syncing cumulative stats) ---
+# We use Gauges so the Master can 'set' them to the aggregate totals reported by workers
+REQUEST_TOTAL = Gauge('locust_requests_total', 'Total requests', ['method', 'name', 'status'])
+AVG_RESPONSE_TIME = Gauge('locust_avg_response_time_ms', 'Average response time in ms', ['method', 'name'])
+CURRENT_RPS = Gauge('locust_rps', 'Current requests per second', ['method', 'name'])
 USER_COUNT = Gauge('locust_users', 'Number of active users')
 
 def metrics_app(environ, start_response):
@@ -31,23 +33,34 @@ def on_locust_init(environment, **kwargs):
         gevent.spawn(server.serve_forever)
 
         def stats_poller():
+            """Polls the global stats object on the Master to update Prometheus metrics."""
             while True:
                 if environment.runner:
+                    # 1. Sync User Count
                     USER_COUNT.set(environment.runner.user_count)
+                    
+                    # 2. Sync Global Stats
+                    for stats_entry in environment.runner.stats.entries.values():
+                        # Extract labels
+                        m = stats_entry.method
+                        n = stats_entry.name
+                        
+                        # Set Request Totals (Success and Failure)
+                        REQUEST_TOTAL.labels(method=m, name=n, status="success").set(stats_entry.num_requests)
+                        REQUEST_TOTAL.labels(method=m, name=n, status="failure").set(stats_entry.num_failures)
+                        
+                        # Set Performance Metrics
+                        AVG_RESPONSE_TIME.labels(method=m, name=n).set(stats_entry.avg_response_time)
+                        CURRENT_RPS.labels(method=m, name=n).set(stats_entry.total_rps)
+                        
                 gevent.sleep(2)
-        gevent.spawn(stats_poller)
 
-@events.request.add_listener
-def on_request(request_type, name, response_time, response_length, exception, **kwargs):
-    status = "failure" if exception else "success"
-    REQUEST_COUNT.labels(method=request_type, name=name, status=status).inc()
-    REQUEST_TIME.labels(method=request_type, name=name).observe(response_time / 1000.0)
+        gevent.spawn(stats_poller)
 
 class PetstoreUser(HttpUser):
     wait_time = between(1, 5)
     
     def on_start(self):
-        """Each user creates their own pet at the start to ensure they have at least one valid ID."""
         self.my_pet_ids = []
         self.add_pet()
 
@@ -58,36 +71,23 @@ class PetstoreUser(HttpUser):
     @task(1)
     def add_pet(self):
         pet_id = int(uuid.uuid4().int >> 96)
-        payload = {
-            "id": pet_id,
-            "name": f"LocustPet_{pet_id}",
-            "photoUrls": ["http://example.com/photo.jpg"],
-            "status": "available"
-        }
+        payload = {"id": pet_id, "name": f"LocustPet_{pet_id}", "photoUrls": [], "status": "available"}
         with self.client.post("/v2/pet", json=payload, name="/pet", catch_response=True) as response:
             if response.status_code == 200:
                 self.my_pet_ids.append(pet_id)
                 response.success()
             else:
-                response.failure(f"Add pet failed with {response.status_code}")
+                response.failure(f"Add failed: {response.status_code}")
 
     @task(2)
     def get_pet_by_id(self):
-        # Always use a pet ID we know exists (one we created)
-        if self.my_pet_ids:
-            pet_id = random.choice(self.my_pet_ids)
-            # EXPLICIT URL construction to avoid any interpolation issues
-            url = "/v2/pet/" + str(pet_id)
-            logger.info(f"Requesting Pet ID: {pet_id} via URL: {url}")
-            
-            with self.client.get(url, name="/pet/{petId}", catch_response=True) as response:
-                if response.status_code == 200:
-                    response.success()
-                else:
-                    response.failure(f"Get pet {pet_id} failed with {response.status_code}")
-        else:
-            # Fallback if no pets created yet
-            self.add_pet()
+        pet_id = random.choice(self.my_pet_ids) if self.my_pet_ids else 1
+        url = "/v2/pet/" + str(pet_id)
+        with self.client.get(url, name="/pet/{petId}", catch_response=True) as response:
+            if response.status_code == 200:
+                response.success()
+            else:
+                response.failure(f"Get {pet_id} failed: {response.status_code}")
 
     @task(1)
     def get_inventory(self):
