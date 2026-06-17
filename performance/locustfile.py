@@ -14,7 +14,6 @@ except (ImportError, ModuleNotFoundError):
         from locust_plugins.listeners import PrometheusExporter
     except (ImportError, ModuleNotFoundError):
         PrometheusExporter = None
-        print("Warning: PrometheusExporter could not be imported. Metrics will not be exported.")
 
 # Prometheus Exporter Listener
 @events.init.add_listener
@@ -24,26 +23,14 @@ def on_locust_init(environment, **kwargs):
 
 class PetstoreUser(HttpUser):
     wait_time = between(1, 5)
+    
+    # Store IDs of pets created during this session to avoid 404s
+    created_pet_ids = []
 
     @task(3)
     def find_pets_by_status(self):
         status = random.choice(["available", "pending", "sold"])
         self.client.get(f"/v2/pet/findByStatus?status={status}", name="/pet/findByStatus")
-
-    @task(2)
-    def get_pet_by_id(self):
-        # We use a known range, but petId might not exist, causing 404s
-        pet_id = random.randint(1, 100)
-        with self.client.get(f"/v2/pet/{pet_id}", name="/pet/{petId}", catch_response=True) as response:
-            if response.status_code == 200:
-                response.success()
-            elif response.status_code == 404:
-                # 404 is expected if pet doesn't exist, we can mark it as success to clean up stats
-                # or keep it as failure if we want to ensure data exists.
-                # For now, let's log the detail to see if it's something else like 400 or 500.
-                response.failure(f"Pet {pet_id} not found (404)")
-            else:
-                response.failure(f"Unexpected status {response.status_code}")
 
     @task(1)
     def add_pet(self):
@@ -56,16 +43,40 @@ class PetstoreUser(HttpUser):
         }
         with self.client.post("/v2/pet", json=payload, name="/pet", catch_response=True) as response:
             if response.status_code == 200:
+                self.created_pet_ids.append(pet_id)
                 response.success()
             else:
                 response.failure(f"Failed to add pet: {response.status_code}")
 
+    @task(2)
+    def get_pet_by_id(self):
+        # Use a created ID if available, otherwise fallback to a random one (likely to 404)
+        if self.created_pet_ids:
+            pet_id = random.choice(self.created_pet_ids)
+        else:
+            pet_id = random.randint(1, 100)
+            
+        # FIX: Ensure the URL uses the actual variable pet_id
+        url = f"/v2/pet/{pet_id}"
+        with self.client.get(url, name="/pet/{petId}", catch_response=True) as response:
+            if response.status_code == 200:
+                response.success()
+            elif response.status_code == 404:
+                # If we used a random ID, 404 is expected behavior
+                if pet_id not in self.created_pet_ids:
+                    response.success() 
+                else:
+                    response.failure(f"Created pet {pet_id} not found (404)")
+            else:
+                response.failure(f"Unexpected status {response.status_code}")
+
     @task(1)
     def place_order(self):
         order_id = random.randint(100, 1000)
+        pet_id = random.choice(self.created_pet_ids) if self.created_pet_ids else 1
         payload = {
             "id": order_id,
-            "petId": random.randint(1, 10),
+            "petId": pet_id,
             "quantity": 1,
             "status": "placed",
             "complete": False
