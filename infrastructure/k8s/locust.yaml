@@ -36,7 +36,7 @@ spec:
       containers:
         - name: locust-master
           # REPLACE with your actual Docker Hub username
-          image: YOUR_DOCKERHUB_NAMESPACE/petstore-locust:latest 
+          image: vernondegala/petstore-locust:latest
           imagePullPolicy: Always
           command: ["python3", "-m", "locust"]
           args: 
@@ -71,7 +71,7 @@ spec:
     spec:
       containers:
         - name: locust-worker
-          image: YOUR_DOCKERHUB_NAMESPACE/petstore-locust:latest 
+          image: vernondegala/petstore-locust:latest
           imagePullPolicy: Always
           command: ["python3", "-m", "locust"]
           args: 

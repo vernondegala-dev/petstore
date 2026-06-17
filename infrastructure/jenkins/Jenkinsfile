@@ -3,7 +3,7 @@ pipeline {
 
     environment {
         // REPLACE this with your actual Docker Hub username in the Jenkins UI or here
-        DOCKER_HUB_USER_RAW = "YOUR_DOCKERHUB_NAMESPACE" 
+        DOCKER_HUB_USER_RAW = "vernondegala"
         DOCKER_CONTEXT = 'default'
     }
 
