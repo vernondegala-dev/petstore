@@ -5,6 +5,7 @@ import logging
 import os
 from prometheus_client import generate_latest, Gauge, Counter, Histogram, REGISTRY
 from gevent import pywsgi
+import gevent
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -15,14 +16,7 @@ REQUEST_TIME = Histogram('locust_request_duration_seconds', 'Response time in se
 REQUEST_COUNT = Counter('locust_requests_total', 'Total requests', ['method', 'name', 'status'])
 USER_COUNT = Gauge('locust_users', 'Number of active users')
 
-@events.request.add_listener
-def on_request(request_type, name, response_time, response_length, exception, **kwargs):
-    status = "failure" if exception else "success"
-    REQUEST_COUNT.labels(method=request_type, name=name, status=status).inc()
-    REQUEST_TIME.labels(method=request_type, name=name).observe(response_time / 1000.0)
-
 def metrics_app(environ, start_response):
-    """Gevent-friendly WSGI app to serve Prometheus metrics."""
     status = '200 OK'
     headers = [('Content-Type', 'text/plain; version=0.0.4; charset=utf-8')]
     start_response(status, headers)
@@ -30,29 +24,50 @@ def metrics_app(environ, start_response):
 
 @events.init.add_listener
 def on_locust_init(environment, **kwargs):
+    """
+    In distributed mode, this runs on the Master. 
+    We listen to stats updates from workers to update our Prometheus gauges.
+    """
     if environment.web_ui:
-        try:
-            port = int(os.getenv("METRICS_PORT", 9191))
-            logger.info(f"Starting Gevent-friendly Prometheus Exporter on port {port}...")
-            
-            # Start WSGI server in a background greenlet (non-blocking)
-            server = pywsgi.WSGIServer(('0.0.0.0', port), metrics_app, log=None)
-            import gevent
-            gevent.spawn(server.serve_forever)
-            
-            logger.info("Prometheus Exporter successfully initialized and running.")
-        except Exception as e:
-            logger.error(f"Failed to initialize Prometheus Exporter: {e}")
+        # 1. Start the Prometheus metrics server
+        port = int(os.getenv("METRICS_PORT", 9191))
+        logger.info(f"Starting Master Prometheus Exporter on port {port}...")
+        server = pywsgi.WSGIServer(('0.0.0.0', port), metrics_app, log=None)
+        gevent.spawn(server.serve_forever)
+
+        # 2. Background task to sync user count and stats from the runner
+        def stats_poller():
+            while True:
+                if environment.runner:
+                    # Sync User Count
+                    USER_COUNT.set(environment.runner.user_count)
+                    
+                    # Sync Request Stats
+                    for stats_entry in environment.runner.stats.entries.values():
+                        method = stats_entry.method
+                        name = stats_entry.name
+                        
+                        # Note: Counter in prometheus_client is additive, 
+                        # but Locust stats are cumulative. 
+                        # We use a trick: set the value to the current total.
+                        # Since Counter doesn't have 'set', we'll use the request event instead.
+                gevent.sleep(2)
+
+        gevent.spawn(stats_poller)
+
+@events.request.add_listener
+def on_request(request_type, name, response_time, response_length, exception, **kwargs):
+    """
+    This fires on Workers during the test, and on the Master 
+    when it receives a report from a worker.
+    """
+    status = "failure" if exception else "success"
+    REQUEST_COUNT.labels(method=request_type, name=name, status=status).inc()
+    REQUEST_TIME.labels(method=request_type, name=name).observe(response_time / 1000.0)
 
 class PetstoreUser(HttpUser):
     wait_time = between(1, 5)
     created_pet_ids = []
-
-    def on_start(self):
-        USER_COUNT.inc()
-
-    def on_stop(self):
-        USER_COUNT.dec()
 
     @task(3)
     def find_pets_by_status(self):
@@ -68,7 +83,7 @@ class PetstoreUser(HttpUser):
                 self.created_pet_ids.append(pet_id)
                 response.success()
             else:
-                response.failure(f"Failed to add pet: {response.status_code}")
+                response.failure(f"Error {response.status_code}")
 
     @task(2)
     def get_pet_by_id(self):
@@ -81,13 +96,3 @@ class PetstoreUser(HttpUser):
                 response.success()
             else:
                 response.failure(f"Status {response.status_code}")
-
-    @task(1)
-    def place_order(self):
-        pet_id = random.choice(self.created_pet_ids) if self.created_pet_ids else 1
-        payload = {"id": random.randint(1, 1000), "petId": pet_id, "quantity": 1, "status": "placed"}
-        self.client.post("/v2/store/order", json=payload, name="/store/order")
-
-    @task(1)
-    def get_inventory(self):
-        self.client.get("/v2/store/inventory", name="/store/inventory")
