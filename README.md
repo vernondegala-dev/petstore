@@ -60,3 +60,4 @@ The Master pod aggregates statistics from all workers and exposes them on port `
 - **Missing Metrics in Prometheus?** Ensure you have clicked **"Start Swarming"** in the Locust UI. Metrics are created lazily upon the first request.
 - **Connection Refused?** Confirm Prometheus is scraping `locust-master:9191/`. Verify with `kubectl logs -l app=locust-master`.
 - **Image Pull Errors?** Ensure the `DOCKER_HUB_USER_RAW` in your Jenkinsfile matches the namespace in your `locust.yaml`.
+ 
