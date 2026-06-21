@@ -8,3 +8,5 @@ pytest-html
 pytest-xdist
 python-dotenv
 jsonschema
+google-genai
+
