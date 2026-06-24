@@ -1,6 +1,12 @@
 pipeline {
     agent any
 
+    parameters {
+        string(name: 'AI_QA_OBJECTIVE', defaultValue: 'Verify pet inventory API and place a temporary order to see if inventory updates', description: 'The high-level testing objective / prompt for the Autonomous QA Agent')
+        string(name: 'AI_QA_MODEL', defaultValue: 'gemini-2.5-flash', description: 'Google Gemini model to use for the QA Agent')
+        booleanParam(name: 'RUN_AI_QA_AGENT', defaultValue: true, description: 'Whether to run the Autonomous AI QA Testing Agent during this build')
+    }
+
     environment {
         // REPLACE this with your actual Docker Hub username in the Jenkins UI or here
         DOCKER_HUB_USER_RAW = "vernondegala"
@@ -46,11 +52,41 @@ pipeline {
             }
         }
 
+        stage('Autonomous AI QA Agent') {
+            when {
+                expression { params.RUN_AI_QA_AGENT }
+            }
+            steps {
+                script {
+                    echo "Checking for GEMINI_API_KEY credential..."
+                    try {
+                        withCredentials([string(credentialsId: 'gemini-api-key', variable: 'GEMINI_API_KEY')]) {
+                            echo "Executing Autonomous AI QA Testing Agent inside the built docker environment..."
+                            // Mount workspace tests folder so any generated test cases persist back to the host workspace!
+                            sh """
+                                docker run --rm \
+                                  -v ${WORKSPACE}/tests:/app/tests \
+                                  -e GEMINI_API_KEY=${GEMINI_API_KEY} \
+                                  ${env.FINAL_PYTEST_IMAGE} \
+                                  python agents/cli_runner.py "${params.AI_QA_OBJECTIVE}" --model "${params.AI_QA_MODEL}"
+                            """
+                        }
+                    } catch (Exception e) {
+                        echo "⚠️  Failed to execute AI QA Agent: ${e.getMessage()}"
+                        echo "Ensure that a 'gemini-api-key' Secret Text credential is configured in Jenkins."
+                        // We do not fail the build if the agent fails or key is missing, so functional tests can still run.
+                        unstable("AI QA Agent failed or was not configured correctly.")
+                    }
+                }
+            }
+        }
+
         stage('API Tests (Pytest)') {
             steps {
                 script {
                     sh "mkdir -p ${WORKSPACE}/reports"
-                    sh "docker run --rm -v ${WORKSPACE}/reports:/app/reports ${env.FINAL_PYTEST_IMAGE}"
+                    // Mount both reports and tests to ensure any auto-generated test files from the AI QA Agent stage are executed!
+                    sh "docker run --rm -v ${WORKSPACE}/reports:/app/reports -v ${WORKSPACE}/tests:/app/tests ${env.FINAL_PYTEST_IMAGE}"
                 }
             }
             post {
